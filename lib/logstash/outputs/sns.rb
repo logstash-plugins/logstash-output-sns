@@ -114,7 +114,7 @@ class LogStash::Outputs::Sns < LogStash::Outputs::Base
       sns_subject
     elsif sns_subject
       LogStash::Json.dump(sns_subject)
-    elsif event.get("host")
+    elsif event.get("host").is_a?(String)
       event.get("host")
     else
       NO_SUBJECT
