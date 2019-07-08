@@ -194,5 +194,14 @@ describe LogStash::Outputs::Sns do
       expect(response["channel"][:data_type]).to eql("String.Array")
       expect(response["channel"][:string_value]).to eql(["product channel", "Test channel"])
     end
+
+    it "Testing multiple string message attributes" do
+      response = subject.send(:create_message_attribute_body, '{"channel": "product channel", "severity": 5}')
+      expect(response["channel"][:data_type]).to eql("String")
+      expect(response["channel"][:string_value]).to eql("product channel")
+      expect(response["severity"][:data_type]).to eql("Number")
+      expect(response["severity"][:string_value]).to eql(5)
+
+    end
   end
 end

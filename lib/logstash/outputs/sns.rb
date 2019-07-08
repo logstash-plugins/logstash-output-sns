@@ -109,7 +109,6 @@ class LogStash::Outputs::Sns < LogStash::Outputs::Base
     }
     if message_attribute != NO_MESSAGE_ATTRIBUTES and message_attribute!=nil
       publish_body[:message_attributes] = message_attribute
-    else
       @logger.debug? && @logger.debug("Sending event to SNS topic [#{arn}] with subject [#{trunc_subj}] and message: #{trunc_msg}")
     end
     @sns.publish(publish_body)
@@ -163,6 +162,8 @@ class LogStash::Outputs::Sns < LogStash::Outputs::Base
               :data_type => "String.Array",
               :string_value => value
           }
+        else
+          @logger.error("Non string array is being sent in message attributes. Message Attributes: #{sns_message_attribute}")
         end
       end
     end
@@ -179,6 +180,7 @@ class LogStash::Outputs::Sns < LogStash::Outputs::Base
       return false
     end
   rescue JSON::ParserError => e
+    @logger.error("Error while parsing message attributes. Message Attributes: #{e}")
     return false
   end
 
