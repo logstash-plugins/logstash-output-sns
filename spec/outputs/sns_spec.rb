@@ -79,9 +79,14 @@ describe LogStash::Outputs::Sns do
       expect(subject.send(:event_subject, event)).to eql(LogStash::Json.dump(["foo", "bar"]))
     end
 
-    it "should return the host if 'sns_subject' not set" do
+    it "should return the host if 'sns_subject' not set and host is a string" do
       event = LogStash::Event.new("host" => "foo")
       expect(subject.send(:event_subject, event)).to eql("foo")
+    end
+
+    it "should return the 'NO SUBJECT' if host not a string" do
+      event = LogStash::Event.new("host" => { "name" => "foo" })
+      expect(subject.send(:event_subject, event)).to eql(LogStash::Outputs::Sns::NO_SUBJECT)
     end
 
     it "should return 'NO SUBJECT' when subject cannot be determined" do
