@@ -18,6 +18,8 @@ describe LogStash::Outputs::Sns do
     inst.register
     inst
   }
+  let (:default_message_attribute) { "NO MESSAGE ATTRIBUTES" }
+  let (:sns_message_attribute) {'{"channel": "product channel"}'}
 
   describe "receiving an event" do
     let(:expected_subject) { double("expected_subject")}
@@ -33,15 +35,15 @@ describe LogStash::Outputs::Sns do
 
     shared_examples("publishing correctly") do
       it "should send a message to the correct ARN if the event has 'arn' set" do
-        expect(subject).to have_received(:send_sns_message).with(arn, anything, anything)
+        expect(subject).to have_received(:send_sns_message).with(arn, anything, anything, default_message_attribute)
       end
 
       it "should send the message" do
-        expect(subject).to have_received(:send_sns_message).with(anything, anything, expected_message)
+        expect(subject).to have_received(:send_sns_message).with(anything, anything, expected_message, default_message_attribute)
       end
 
       it "should send the subject" do
-        expect(subject).to have_received(:send_sns_message).with(anything, expected_subject, anything)
+        expect(subject).to have_received(:send_sns_message).with(anything, expected_subject, anything, default_message_attribute)
       end
     end
 
@@ -95,7 +97,8 @@ describe LogStash::Outputs::Sns do
       {
         :topic_arn => arn,
         :subject => sns_subject,
-        :message => sns_message
+        :message => sns_message,
+        :message_attributes => sns_message_attribute
       }
     }
     let(:long_message) { "A" * (LogStash::Outputs::Sns::MAX_MESSAGE_SIZE_IN_BYTES + 1) }
@@ -104,13 +107,13 @@ describe LogStash::Outputs::Sns do
 
     it "should raise an ArgumentError if no arn is provided" do
       expect {
-        subject.send(:send_sns_message, nil, sns_subject, sns_message)
+        subject.send(:send_sns_message, nil, sns_subject, sns_message, sns_message_attribute)
       }.to raise_error(ArgumentError)
     end
 
     it "should send a well formed message through to SNS" do
       expect(mock_client).to receive(:publish).with(good_publish_args)
-      subject.send(:send_sns_message, arn, sns_subject, sns_message)
+      subject.send(:send_sns_message, arn, sns_subject, sns_message, sns_message_attribute)
     end
 
     it "should attempt to publish a boot message" do
@@ -127,7 +130,7 @@ describe LogStash::Outputs::Sns do
                                expect(args[:message].bytesize).to eql(max_size)
                              }
 
-      subject.send(:send_sns_message, arn, sns_subject, long_message)
+      subject.send(:send_sns_message, arn, sns_subject, long_message, sns_message_attribute)
     end
 
     it "should truncate long subjects before sending" do
@@ -136,7 +139,69 @@ describe LogStash::Outputs::Sns do
                                expect(args[:subject].bytesize).to eql(max_size)
                              }
 
-      subject.send(:send_sns_message, arn, long_subject, sns_message)
+      subject.send(:send_sns_message, arn, long_subject, sns_message, sns_message_attribute)
+    end
+  end
+
+  describe "Consume message attributes" do
+
+    it "Testing No message attributes" do
+      event = LogStash::Event.new()
+      response = subject.send(:event_message_attributes, event)
+      expect(response).to eql(default_message_attribute)
+    end
+
+    it "Testing String message attributes" do
+      event = LogStash::Event.new("sns_message_attribute" => '{"channel": "product channel"}')
+      response = subject.send(:event_message_attributes, event)
+      expect(response["channel"][:data_type]).to eql("String")
+      expect(response["channel"][:string_value]).to eql("product channel")
+    end
+
+    it "Testing Number message attributes" do
+      event = LogStash::Event.new("sns_message_attribute" => '{"channel": 123}')
+      response = subject.send(:event_message_attributes, event)
+      expect(response["channel"][:data_type]).to eql("Number")
+      expect(response["channel"][:string_value]).to eql(123)
+    end
+
+    it "Testing String array message attributes" do
+      event = LogStash::Event.new("sns_message_attribute" => '{"channel": ["product channel", "Test channel"]}')
+      response = subject.send(:event_message_attributes, event)
+
+      expect(response["channel"][:data_type]).to eql("String.Array")
+      expect(response["channel"][:string_value]).to eql(["product channel", "Test channel"])
+    end
+  end
+
+
+  describe "Creating message attributes body for AWS SDK" do
+
+    it "Testing String message attributes" do
+      response = subject.send(:build_message_attribute_body, '{"channel": "product channel"}')
+      expect(response["channel"][:data_type]).to eql("String")
+      expect(response["channel"][:string_value]).to eql("product channel")
+    end
+
+    it "Testing Number message attributes" do
+      response = subject.send(:build_message_attribute_body, '{"channel": 123}')
+      expect(response["channel"][:data_type]).to eql("Number")
+      expect(response["channel"][:string_value]).to eql(123)
+    end
+
+    it "Testing String array message attributes" do
+      response = subject.send(:build_message_attribute_body, '{"channel": ["product channel", "Test channel"]}')
+      expect(response["channel"][:data_type]).to eql("String.Array")
+      expect(response["channel"][:string_value]).to eql(["product channel", "Test channel"])
+    end
+
+    it "Testing multiple string message attributes" do
+      response = subject.send(:build_message_attribute_body, '{"channel": "product channel", "severity": 5}')
+      expect(response["channel"][:data_type]).to eql("String")
+      expect(response["channel"][:string_value]).to eql("product channel")
+      expect(response["severity"][:data_type]).to eql("Number")
+      expect(response["severity"][:string_value]).to eql(5)
+
     end
   end
 end

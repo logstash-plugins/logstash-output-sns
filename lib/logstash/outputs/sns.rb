@@ -37,6 +37,7 @@ class LogStash::Outputs::Sns < LogStash::Outputs::Base
   MAX_SUBJECT_SIZE_IN_CHARACTERS  = 100
   MAX_MESSAGE_SIZE_IN_BYTES       = 32768
   NO_SUBJECT = "NO SUBJECT"
+  NO_MESSAGE_ATTRIBUTES = "NO MESSAGE ATTRIBUTES"
 
   config_name "sns"
   
@@ -63,17 +64,15 @@ class LogStash::Outputs::Sns < LogStash::Outputs::Base
     publish_boot_message_arn()
 
     @codec.on_event do |event, encoded|
-      send_sns_message(event_arn(event), event_subject(event), encoded)
+      send_sns_message(event_arn(event), event_subject(event), encoded, event_message_attributes(event))
     end
   end
 
   public
   def receive(event)
-    
-
     if (sns_msg = event.get("sns_message"))
       if sns_msg.is_a?(String)
-        send_sns_message(event_arn(event), event_subject(event), sns_msg)
+        send_sns_message(event_arn(event), event_subject(event), sns_msg, event_message_attributes(event))
       else
         @codec.encode(sns_msg)
       end
@@ -87,23 +86,28 @@ class LogStash::Outputs::Sns < LogStash::Outputs::Base
     # Try to publish a "Logstash booted" message to the ARN provided to
     # cause an error ASAP if the credentials are bad.
     if @publish_boot_message_arn
-      send_sns_message(@publish_boot_message_arn, 'Logstash booted', 'Logstash successfully booted')
+      send_sns_message(@publish_boot_message_arn, 'Logstash booted', 'Logstash successfully booted', event_message_attributes(event))
     end
   end
 
   private
-  def send_sns_message(arn, subject, message)
+  def send_sns_message(arn, subject, message, message_attribute)
     raise ArgumentError, 'An SNS ARN is required.' unless arn
 
     trunc_subj = LogStash::Util::UnicodeTrimmer.trim_bytes(subject, MAX_SUBJECT_SIZE_IN_CHARACTERS)
     trunc_msg = LogStash::Util::UnicodeTrimmer.trim_bytes(message, MAX_MESSAGE_SIZE_IN_BYTES)
+    trunc_msg_attributes = nil 
+    if message_attribute != NO_MESSAGE_ATTRIBUTES and !message_attribute.nil?
+      trunc_msg_attributes = LogStash::Util::UnicodeTrimmer.trim_bytes(message_attribute, MAX_MESSAGE_SIZE_IN_BYTES)
+    end
 
-    @logger.debug? && @logger.debug("Sending event to SNS topic [#{arn}] with subject [#{trunc_subj}] and message: #{trunc_msg}")
+    @logger.debug? && @logger.debug("Sending event to SNS topic [#{arn}] with subject [#{trunc_subj}] and message: #{trunc_msg} with attribute: #{message_attributes}")
 
     @sns.publish({
                    :topic_arn => arn,
                    :subject => trunc_subj,
-                   :message => trunc_msg
+                   :message => trunc_msg,
+                   :message_attributes => trunc_msg_attributes
                  })
   end
 
@@ -124,5 +128,51 @@ class LogStash::Outputs::Sns < LogStash::Outputs::Base
   private
   def event_arn(event)
     event.get("sns") || @arn
+  end
+
+  private
+  def event_message_attributes(event)
+    sns_message_attribute = event.get("sns_message_attribute")
+    return NO_MESSAGE_ATTRIBUTES unless is_json?(sns_message_attribute)
+      
+    return build_message_attribute_body(sns_message_attribute)
+  end
+
+  private
+  def build_message_attribute_body(sns_message_attribute)
+    message_attributes = {}
+    JSON.parse(sns_message_attribute).each do |key, value|
+      if !value.instance_of?(String) || !value.is_a?(Numeric) || !(value.instance_of?(Array) && value.all? {|i| i.instance_of?(String)})
+        @logger.error("Invalid data sent in message attributes: #{sns_message_attribute}")
+      end
+
+      if value.instance_of?(String)
+        message_attributes[key] = {
+            :data_type => "String",
+            :string_value => value
+        }
+      elsif value.is_a?(Numeric)
+        message_attributes[key] = {
+            :data_type => "Number",
+            :string_value => value
+        }
+      elsif value.instance_of?(Array)
+          message_attributes[key] = {
+              :data_type => "String.Array",
+              :string_value => value
+          }
+      end
+    end
+
+    return message_attributes
+  end
+
+  private
+  def is_json?(json)
+    return false if json !~ /[^[:space:]]/
+    !!JSON.parse(json)
+  rescue JSON::ParserError => e
+    @logger.error("Error while parsing message attributes: #{e}")
+    return false
   end
 end
